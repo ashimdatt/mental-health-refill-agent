@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Human Review · Refill Triage Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">Refill Triage Demo</div>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/patient/">Patient chat</a>
+          <a class="active" href="/review/">Human review</a>
+        </nav>
+      </header>
+
+      <div class="disclaimer">
+        DEMO ONLY. Cases are created when the refill rubric fails or crisis language is detected.
+        Reviewer actions update local demo state only.
+      </div>
+
+      <div class="layout-split">
+        <section class="panel">
+          <div class="panel-header">Review queue</div>
+          <ul id="case-list" class="case-list"></ul>
+          <div id="empty-queue" class="empty" hidden>
+            No flagged cases yet. Run a patient chat that fails the rubric, then refresh.
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">Case detail</div>
+          <div id="case-detail" class="case-detail">
+            <p class="muted">Select a case to view identifiers, rubric flags, and transcript.</p>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      let selectedId = null;
+      let cases = [];
+
+      function escapeHtml(str) {
+        return String(str)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+      }
+
+      function renderList() {
+        const list = document.getElementById("case-list");
+        const empty = document.getElementById("empty-queue");
+        if (!cases.length) {
+          list.innerHTML = "";
+          empty.hidden = false;
+          return;
+        }
+        empty.hidden = true;
+        list.innerHTML = cases
+          .map((c) => {
+            const active = c.id === selectedId ? "active" : "";
+            return `<li>
+              <button class="${active}" data-id="${c.id}" type="button">
+                <div><strong>${escapeHtml(c.patientDisplayName)}</strong></div>
+                <div class="tiny">${escapeHtml(c.medicationRequested)} · ${escapeHtml(c.status)} · ${c.flags.length} flags</div>
+              </button>
+            </li>`;
+          })
+          .join("");
+
+        list.querySelectorAll("button").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            selectedId = btn.dataset.id;
+            renderList();
+            renderDetail();
+          });
+        });
+      }
+
+      function renderDetail() {
+        const root = document.getElementById("case-detail");
+        const c = cases.find((x) => x.id === selectedId);
+        if (!c) {
+          root.innerHTML = `<p class="muted">Select a case to view identifiers, rubric flags, and transcript.</p>`;
+          return;
+        }
+
+        const flags = c.flags
+          .map(
+            (f) => `<div class="flag ${escapeHtml(f.severity)}">
+              <strong>${escapeHtml(f.code)}</strong> (${escapeHtml(f.severity)})<br/>
+              ${escapeHtml(f.message)}
+              ${f.evidence ? `<div class="tiny">Evidence: ${escapeHtml(f.evidence)}</div>` : ""}
+            </div>`
+          )
+          .join("");
+
+        const claimed = c.claimedSnapshot
+          ? Object.entries(c.claimedSnapshot)
+              .filter(([, v]) => v !== undefined && v !== null && v !== "")
+              .map(
+                ([k, v]) =>
+                  `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`
+              )
+              .join("")
+          : "";
+
+        const transcript = c.transcript
+          .filter((m) => m.role !== "system")
+          .map(
+            (m) =>
+              `<div class="line"><span class="role">${escapeHtml(m.role)}:</span>${escapeHtml(m.content)}</div>`
+          )
+          .join("");
+
+        root.innerHTML = `
+          <h2 style="margin:0 0 0.35rem;font-family:var(--font-display);font-size:1.25rem;">
+            ${escapeHtml(c.patientDisplayName)}
+          </h2>
+          <p class="tiny">Case ${escapeHtml(c.id)} · Recommended: ${escapeHtml(c.recommendedAction)}</p>
+          <dl class="meta-grid">
+            <div><dt>Medication</dt><dd>${escapeHtml(c.medicationRequested)}${c.doseRequested != null ? " " + c.doseRequested + " mg" : ""}</dd></div>
+            <div><dt>Status</dt><dd>${escapeHtml(c.status)}</dd></div>
+          </dl>
+          <p><strong>Decision summary</strong></p>
+          <p>${escapeHtml(c.decisionSummary)}</p>
+          <p><strong>Answers captured (rubric inputs)</strong></p>
+          <dl class="meta-grid">${claimed || "<p class='muted'>None</p>"}</dl>
+          <p><strong>Structured flag reasons</strong></p>
+          ${flags || "<p class='muted'>No structured flags.</p>"}
+          <div class="actions">
+            <button class="btn secondary" data-status="in_review" type="button">Mark in review</button>
+            <button class="btn primary" data-status="resolved_refill" type="button">Approve refill (manual)</button>
+            <button class="btn warn" data-status="resolved_no_refill" type="button">Deny refill</button>
+            <button class="btn danger" data-status="closed" type="button">Close case</button>
+          </div>
+          <label class="tiny" style="display:block;margin-top:0.75rem;">Reviewer notes</label>
+          <textarea id="notes" rows="3" style="width:100%;margin-top:0.35rem;font:inherit;padding:0.5rem;border-radius:8px;border:1px solid var(--line);">${escapeHtml(c.reviewerNotes || "")}</textarea>
+          <div class="transcript">
+            <p><strong>Conversation transcript</strong></p>
+            ${transcript}
+          </div>
+        `;
+
+        root.querySelectorAll("button[data-status]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const notes = document.getElementById("notes").value;
+            const res = await fetch(`/api/cases/${c.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: btn.dataset.status, reviewerNotes: notes }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              alert(data.error || "Update failed");
+              return;
+            }
+            const idx = cases.findIndex((x) => x.id === c.id);
+            cases[idx] = data.case;
+            renderList();
+            renderDetail();
+          });
+        });
+      }
+
+      async function loadCases() {
+        const res = await fetch("/api/cases");
+        const data = await res.json();
+        cases = data.cases || [];
+        if (selectedId && !cases.find((c) => c.id === selectedId)) selectedId = null;
+        if (!selectedId && cases.length) selectedId = cases[0].id;
+        renderList();
+        renderDetail();
+      }
+
+      loadCases().catch((err) => {
+        document.getElementById("case-detail").textContent = "Failed to load cases: " + err.message;
+      });
+
+      setInterval(() => {
+        loadCases().catch(() => {});
+      }, 8000);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Refill Triage Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">Refill Triage Demo</div>
+        <nav class="nav">
+          <a href="/patient/">Patient chat</a>
+          <a href="/review/">Human review</a>
+        </nav>
+      </header>
+
+      <main class="hero-block">
+        <p class="eyebrow">Mental health medication refill agent</p>
+        <h1>Score refill chats against a safety rubric.</h1>
+        <p class="lede">
+          Demo only. Not medical advice, not a real pharmacy, and not a clinician. The agent asks
+          structured questions and evaluates answers against research-backed rules. It does
+          <strong>not</strong> look up a patient chart database.
+        </p>
+        <div class="cta-row">
+          <a class="btn primary" href="/patient/">Open patient chat</a>
+          <a class="btn secondary" href="/review/">Open review queue</a>
+        </div>
+      </main>
+
+      <section class="section">
+        <h2>Demo scripts</h2>
+        <p class="muted">
+          Copy these answer sequences into chat to exercise refill approval vs human review.
+        </p>
+        <div id="scenario-list" class="card-list"></div>
+      </section>
+    </div>
+    <script>
+      async function loadScenarios() {
+        const res = await fetch("/api/scenarios");
+        const data = await res.json();
+        const root = document.getElementById("scenario-list");
+        root.innerHTML = data.scenarios
+          .map(
+            (s) => `
+          <article class="info-card">
+            <h3>${s.title}</h3>
+            <p><strong>Expected:</strong> ${s.expectedOutcome}</p>
+            <p class="muted">${s.summary}</p>
+            <p class="tiny"><strong>Suggested name:</strong> ${s.suggestedName}</p>
+            <ol class="tiny" style="margin:0.5rem 0 0;padding-left:1.1rem;">
+              ${s.script.map((line) => `<li>${line}</li>`).join("")}
+            </ol>
+          </article>`
+          )
+          .join("");
+      }
+      loadScenarios().catch((err) => {
+        document.getElementById("scenario-list").textContent =
+          "Failed to load scenarios: " + err.message;
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Patient Chat · Refill Triage Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">Refill Triage Demo</div>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a class="active" href="/patient/">Patient chat</a>
+          <a href="/review/">Human review</a>
+        </nav>
+      </header>
+
+      <div class="disclaimer">
+        DEMO ONLY. This is not medical advice, not a real pharmacy, and not a clinician. It does not
+        prescribe or diagnose. Answers are scored against a refill rubric (no chart lookup). If you
+        are in crisis, call 911 or contact 988 (US).
+      </div>
+
+      <div class="layout-split">
+        <section class="panel">
+          <div class="panel-header">Patient conversation</div>
+          <div id="status" class="status-banner" role="status"></div>
+          <div id="chat-log" class="chat-log" aria-live="polite"></div>
+          <form id="composer" class="chat-composer">
+            <input
+              id="message"
+              type="text"
+              placeholder="Type your message..."
+              autocomplete="off"
+              required
+            />
+            <button class="btn primary" type="submit" id="send-btn">Send</button>
+          </form>
+        </section>
+
+        <aside class="panel">
+          <div class="panel-header">Demo scripts</div>
+          <div class="side-help">
+            <p class="muted">Start with any display name, then follow a home-page script.</p>
+            <ul id="tips"></ul>
+            <button class="btn secondary" id="new-chat" type="button">Start new chat</button>
+            <p class="tiny" style="margin-top: 1rem">
+              After escalation, open the
+              <a href="/review/">human review</a> queue to see rubric flag reasons.
+            </p>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      let sessionId = null;
+      let completed = false;
+
+      const chatLog = document.getElementById("chat-log");
+      const statusEl = document.getElementById("status");
+      const input = document.getElementById("message");
+      const sendBtn = document.getElementById("send-btn");
+
+      function renderMessages(messages) {
+        chatLog.innerHTML = messages
+          .filter((m) => m.role !== "system")
+          .map((m) => `<div class="bubble ${m.role}">${escapeHtml(m.content)}</div>`)
+          .join("");
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+
+      function escapeHtml(str) {
+        return str
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+      }
+
+      function showStatus(conversation) {
+        statusEl.className = "status-banner";
+        if (!conversation.decision) {
+          statusEl.classList.remove("visible");
+          statusEl.textContent = "";
+          return;
+        }
+        statusEl.classList.add("visible");
+        if (conversation.decision === "refill_approved") {
+          statusEl.classList.add("ok");
+          statusEl.textContent = "Status: Simulated refill order sent to pharmacy.";
+        } else if (conversation.decision === "crisis_escalation") {
+          statusEl.classList.add("crisis");
+          statusEl.textContent =
+            "Status: Crisis escalation to human review. Please seek immediate help if needed (911 / 988).";
+        } else {
+          statusEl.classList.add("escalated");
+          statusEl.textContent = "Status: Escalated to human review (rubric failed).";
+        }
+      }
+
+      function setCompleted(isDone) {
+        completed = isDone;
+        input.disabled = isDone;
+        sendBtn.disabled = isDone;
+      }
+
+      async function startSession() {
+        const res = await fetch("/api/chat/sessions", { method: "POST" });
+        const data = await res.json();
+        sessionId = data.conversation.id;
+        setCompleted(false);
+        renderMessages(data.conversation.messages);
+        showStatus(data.conversation);
+      }
+
+      async function sendMessage(content) {
+        const res = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to send message");
+        }
+        renderMessages(data.conversation.messages);
+        showStatus(data.conversation);
+        if (data.conversation.phase === "completed") setCompleted(true);
+      }
+
+      document.getElementById("composer").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (completed || !sessionId) return;
+        const content = input.value.trim();
+        if (!content) return;
+        input.value = "";
+        sendBtn.disabled = true;
+        try {
+          await sendMessage(content);
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          if (!completed) sendBtn.disabled = false;
+          input.focus();
+        }
+      });
+
+      document.getElementById("new-chat").addEventListener("click", () => {
+        startSession().catch((err) => alert(err.message));
+      });
+
+      async function loadTips() {
+        const res = await fetch("/api/scenarios");
+        const data = await res.json();
+        document.getElementById("tips").innerHTML = data.scenarios
+          .slice(0, 5)
+          .map(
+            (s) =>
+              `<li><strong>${s.title}</strong> → ${s.expectedOutcome}</li>`
+          )
+          .join("");
+      }
+
+      Promise.all([startSession(), loadTips()]).catch((err) => {
+        chatLog.innerHTML = `<div class="empty">Could not start session: ${escapeHtml(err.message)}</div>`;
+      });
+    </script>
+  </body>
+</html>
